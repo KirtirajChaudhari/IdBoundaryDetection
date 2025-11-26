@@ -18,8 +18,6 @@ The core process is intentionally simple and interview-friendly:
 
 3. **Rectification**: A projective transform is applied using the four corners to warp the card into a canonical, top-down view (e.g., 600×400 px).
 
-**The Sell**: "We segment the card region first, then we use simple geometric principles (minimum bounding box) on that mask to locate the four corners and rectify the image."
-
 ---
 
 ## 🚀 Quick Start (Windows PowerShell)
