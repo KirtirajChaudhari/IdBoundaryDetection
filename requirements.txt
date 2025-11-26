@@ -1,0 +1,14 @@
+torch>=1.13
+torchvision
+segmentation-models-pytorch>=0.3.8
+timm
+albumentations
+numpy
+pillow
+scikit-image
+scikit-learn
+shapely
+matplotlib
+tqdm
+pandas
+pycocotools

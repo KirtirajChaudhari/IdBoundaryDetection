@@ -1,0 +1,48 @@
+{
+  "ratios": [0.7, 0.15, 0.15],
+
+  "datasets": [
+    {
+      "name": "midv2020",
+      "image_dir": "D:/Codes/CampusDrive/project_root/datasets/midv2020/midv2020_processed/images",
+      "mask_dir": "D:/Codes/CampusDrive/project_root/datasets/midv2020/midv2020_processed/masks"
+    },
+
+    {
+      "name": "midv500",
+      "root_dir": "D:/Codes/CampusDrive/project_root/datasets/midv500",
+      "mode": "midv500"
+    },
+
+    {
+      "name": "smartdoc",
+      "image_dir": "D:/Codes/CampusDrive/project_root/datasets/smartDoc/smart_doc_extracted/images",
+      "mask_dir": null
+    },
+
+    {
+      "name": "iranian",
+      "image_dir": "D:/Codes/CampusDrive/project_root/datasets/iranian/iranian_national_id_card_images/iranian_national_id_card_images",
+      "mask_dir": null
+    },
+
+    {
+      "name": "idcard_classification",
+      "image_dir": "D:/Codes/CampusDrive/project_root/datasets/id_card_classification/train/train_frames/images",
+      "mask_dir": "D:/Codes/CampusDrive/project_root/datasets/id_card_classification/train/train_masks/images"
+    },
+
+    {
+      "name": "phone_images",
+      "image_dir": "D:/Codes/CampusDrive/project_root/datasets/phone_images",
+      "mask_dir": null
+    },
+
+    {
+      "name": "roboflow_train",
+      "image_dir": "D:/Codes/CampusDrive/project_root/datasets/annotations/roboflow_masks/train_annotations.coco+jpg+png/images",
+      "mask_dir": "D:/Codes/CampusDrive/project_root/datasets/annotations/roboflow_masks/train_annotations.coco+jpg+png/masks",
+      "coco_json": "D:/Codes/CampusDrive/project_root/datasets/annotations/roboflow_masks/train_annotations.coco+jpg+png/train_annotations.coco.json"
+    }
+  ]
+}
