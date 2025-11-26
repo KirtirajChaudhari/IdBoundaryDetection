@@ -12,10 +12,7 @@ __pycache__/
 data/
 data_small/
 out/
-checkpoints/
-*.pth
-*.pt
-*.ckpt
+
 
 # Logs & reports
 *.log
