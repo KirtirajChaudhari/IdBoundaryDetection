@@ -1,8 +1,3 @@
-Here is the complete README.md content in a single block, ready to copy.
-
-Markdown
-
-
 # ID Card Semantic Segmentation – DeepLabV3+
 
 This repository contains my solution for the **AI Trainee Assignment (RefurbEdge)**.  
@@ -146,23 +141,4 @@ This will save the best checkpoint at:
   * Model is robust for real-world variations: blur, angle, shadows, glare.
 
 -----
-
-# ✔️ Final Deliverables (Included)
-
-  - [x] `infer_and_visualize.py`
-  - [x] `deeplabv3p_best.pth`
-  - [x] `README.md` (this file)
-  - [x] `requirements.txt`
-  - [x] Sample outputs
-
------
-
-# 📧 Contact
-
-Feel free to reach out if any clarification is required.
-
-```
-
-### Next Step
-Would you like me to provide the specific `requirements.txt` file content now, so your project dependencies match the installation instructions exactly?
 ```

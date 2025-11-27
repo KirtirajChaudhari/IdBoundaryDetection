@@ -1,162 +1,191 @@
 # 🪪 RefurbEdge — ID Card Segmentation & Rectification
 
-An end-to-end, non-YOLO pipeline for detecting, segmenting, estimating corners, and rectifying ID cards from unconstrained images. This project implements a robust U-Net + Geometry approach, focusing on explainability, practicality, and minimal dependencies.
+### *Two-Approach Comparative Solution: U-Net Segmentation + Geometry & DeepLabV3+ Semantic Segmentation*
+
+This repository presents two independent and explainable approaches to **ID card detection, segmentation, corner estimation, and rectification**, designed under the requirement:
+
+> **No YOLO, no SAM, no OpenCV-only heuristics.**
+> Focus on **simple, practical, reproducible ML** suitable for interview & real-world use.
+
+These models operate across uncontrolled image scenarios:
+
+* Varied lighting & backgrounds
+* Arbitrary orientations & device-captured images
+* Multiplicity of document types (IDs, passports, licenses)
 
 ---
 
-## 🌟 Project Overview
+## 🌟 Overview of Both Approaches
 
-This pipeline was developed as an AI Trainee (Computer Vision) assignment with a core constraint: **avoid complex black-box models like YOLO, SAM, and heavy OpenCV heuristic pipelines**.
-
-### High-Level Approach
-
-The core process is intentionally simple and interview-friendly:
-
-1. **Semantic Segmentation**: A U-Net (with a ResNet-18 encoder) is trained to produce a binary mask distinguishing the "card" from the "background."
-
-2. **Geometry Extraction**: The mask is processed to find the largest polygon. The Minimum Rotated Rectangle of this polygon is computed, and its four vertices are used as the estimated card corners.
-
-3. **Rectification**: A projective transform is applied using the four corners to warp the card into a canonical, top-down view (e.g., 600×400 px).
-
-**The Sell**: "We segment the card region first, then we use simple geometric principles (minimum bounding box) on that mask to locate the four corners and rectify the image."
+| Approach                                          | Folder                    | Core Technique                                                 | Key Output                        | Strength                                 |
+| ------------------------------------------------- | ------------------------- | -------------------------------------------------------------- | --------------------------------- | ---------------------------------------- |
+| **Approach A — U-Net Segmentation + Geometry**    | `Using UNet Segmentation` | U-Net (ResNet-18 encoder) + Shapely minimum bounding rectangle | Mask + 4 Corners + Rectified Crop | Best for corner accuracy & rectification |
+| **Approach B — DeepLabV3+ Semantic Segmentation** | `Using DeepLabV3+`        | DeepLabV3+ (ResNet34) segmentation                             | Mask + Overlay + Boundary outline | Strong mask quality & cleaner edges      |
 
 ---
 
-## 🚀 Quick Start (Windows PowerShell)
+## 🎯 Problem Statement
 
-The following steps assume you have Python 3.10+ and have updated the paths in `scripts/merge_config.json` to point to your local dataset directories.
+Given an image possibly containing an ID card:
 
-### 1. Setup Environment
+1. Segment the ID card region.
+2. Derive boundary geometry / corner points.
+3. Produce a warped fronto-parallel view (Approach A).
+4. Generate boundary outline (Approach B).
 
-```powershell
-# Create and activate virtualenv
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+Both solutions support:
 
-# Install requirements
-pip install -r requirements.txt
+* **GPU acceleration**
+* **Mixed precision (AMP)**
+* **Dataset merging + augmentation**
+* **Metrics: IoU, Dice, NCD**
 
-# (Optional for Roboflow COCO exports on Windows)
-# pip install git+https://github.com/philferriere/cocoapi.git#subdirectory=PythonAPI
+---
+
+## 📁 Repository Structure
+
+```
+IdBoundaryDetection/
+│
+├── README.md                               <-- THIS FILE
+├── requirements.txt
+├── .gitignore
+├── .gitattributes                          <-- For Git LFS model management
+│
+├── Using UNet Segmentation/                <-- Approach A (Primary solution)
+│   ├── src/
+│   ├── scripts/
+│   ├── sample_outputs/
+│   ├── checkpoints/unet_idcard_best.pth    <-- via Git LFS
+│   └── README.md                           <-- Detailed documentation
+│
+├── Using DeepLabV3+/                       <-- Approach B (Alternative solution)
+│   ├── infer_and_visualize.py
+│   ├── deeplabv3p_best.pth                 <-- via Git LFS
+│   └── README.md
+│
+└── LICENSE
 ```
 
-### 2. Merge Datasets
+---
 
-This script unifies various formats (pre-generated masks, MIDV-500 JSON quadrilaterals, COCO) into the standard `data/` structure.
+## 🧠 Approach A — U-Net Segmentation + Geometry (Primary)
+
+### Pipeline
+
+1. **Binary segmentation (foreground card / background)**
+2. **Polygon extraction → Largest connected region**
+3. **Minimum rotated rectangle → 4 corners**
+4. **Projective warp → Rectified standardized crop**
+
+### Why this works
+
+> Segment first → Geometry second
+> More stable than regression-based corner prediction, and more explainable than YOLO-style detectors.
+
+### Example Command
 
 ```powershell
-# Merge into .\data
+python -m src.infer .\sample_outputs\a1.jpeg .\checkpoints\unet_idcard_best.pth .\sample_outputs\inference_outputs\test1
+```
+
+Output includes:
+
+```
+mask.png
+overlay.png
+corners.json
+warp.png
+```
+
+---
+
+## 🧠 Approach B — DeepLabV3+ Semantic Segmentation (Alternative)
+
+### Motivation
+
+Better boundary smoothness and general segmentation robustness vs. U-Net on noisy datasets.
+
+### Output
+
+Mask + overlay + **precise ID card boundary outline**
+
+### Example Command
+
+```bash
+python infer_and_visualize.py --image samples/input.jpg --output-dir results
+```
+
+---
+
+## 🚀 Setup & Training Instructions
+
+### Create environment
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### Merge datasets for Approach A
+
+```powershell
 python .\scripts\merge_datasets.py --config .\scripts\merge_config.json --out .\data --seed 42
 ```
 
-### 3. Training
-
-It's recommended to start with the smaller subset for faster experimentation on limited VRAM (e.g., GTX 1650).
-
-#### A. Train on Small Subset (Recommended)
+### Train U-Net (recommended subset first)
 
 ```powershell
-# 3.1 Create a smaller subset for faster experiments
-python .\scripts\make_small_subset.py `
-    --manifest .\data\manifest.csv `
-    --out .\data_small `
-    --max_per_dataset 2000
-
-# 3.2 Train the model
-python -m src.train `
-    --data_root .\data_small `
-    --checkpoint .\checkpoints\unet_idcard_small.pth `
-    --epochs 5 `
-    --batch 4 `
-    --lr 1e-4
+python -m src.train --data_root .\data_small --checkpoint .\checkpoints\unet_idcard_best.pth --epochs 5 --batch 4 --lr 1e-4
 ```
 
-#### B. Train on Full Dataset
+### Evaluate
 
 ```powershell
-python -m src.train `
-    --data_root .\data `
-    --checkpoint .\checkpoints\unet_idcard.pth `
-    --epochs 3 `
-    --batch 4 `
-    --lr 1e-4
-```
-
-### 4. Inference
-
-Run the pipeline on a single image to generate the mask, overlay, corners, and rectified crop.
-
-```powershell
-python -m src.infer `
-    .\sample_outputs\a1.jpeg `
-    .\checkpoints\unet_idcard.pth `
-    .\sample_outputs\inference_outputs\test1
-```
-
-### 5. Evaluation
-
-Compute standard and geometry-aware metrics (IoU, Dice, NCD) against the ground-truth test masks.
-
-```powershell
-python -m src.evaluate `
-    --pred_dir .\out `
-    --gt_dir .\data\masks\test `
-    --out .\out\report.csv
+python -m src.evaluate --pred_dir .\out --gt_dir .\data\masks\test --out .\out\report.csv
 ```
 
 ---
 
-## 📂 Repository Structure
+## 🛠 Tech Stack & Tools
 
-```
-RefurbEdge/
-├── README.md
-├── requirements.txt
-│
-├── docs/
-│   └── project_requirements.md    # Detailed Functional/Non-Functional Specs
-│
-├── scripts/                       # Data preparation and QA tools
-│   ├── merge_datasets.py
-│   ├── merge_config.json          # Config for original dataset paths
-│   └── make_small_subset.py
-│
-└── src/                           # Core pipeline logic
-    ├── dataset.py                 # CardDataset + Albumentations
-    ├── model.py                   # U-Net/ResNet-18 factory
-    ├── train.py                   # Training loop (AMP, Grad Checkpointing)
-    ├── infer.py                   # Segmentation, Geometry, and Warping
-    ├── evaluate.py                # IoU, Dice, NCD metrics
-    └── utils.py                   # Polygon/Warp utilities
-```
+| Category          | Tools                                 |
+| ----------------- | ------------------------------------- |
+| Deep Learning     | PyTorch, AMP, Grad Checkpointing      |
+| Segmentation      | U-Net, DeepLabV3+                     |
+| Data Augmentation | Albumentations                        |
+| Geometry          | Shapely, scikit-image                 |
+| Evaluation        | IoU, Dice, Normalized Corner Distance |
+| Deployment        | Single script inference               |
 
 ---
 
-## 🛠 Tech Stack & Design Choices
+## 🎓 What This Demonstrates for the AI Trainee Role
 
-| Component | Framework / Library | Rationale |
-|-----------|-------------------|-----------|
-| **Deep Learning** | PyTorch, segmentation_models_pytorch | Industry standard, robust U-Net implementation. |
-| **Model** | U-Net with ResNet-18 Encoder | Simple, fast to train, excellent balance of performance/explainability. |
-| **Acceleration** | torch.amp.autocast, Grad Checkpointing | Crucial for GTX 1650 (4GB VRAM). Reduces memory footprint and speeds up training. |
-| **Data Augmentation** | Albumentations | Rich, fast, GPU-friendly augmentations for rotation, lighting, and perspective. |
-| **Geometry** | Shapely, scikit-image | Reliable, simple libraries for polygon operations (largest polygon, minimum rotated rectangle). |
-| **Metrics** | IoU, Dice, NCD (Normalized Corner Distance) | Includes a geometry-aware metric to evaluate the final corner estimation quality. |
+✔ Ability to merge & standardize real heterogeneous datasets  
+✔ Annotation & mask handling (COCO, polygons, JSON quadrilaterals)  
+✔ Practical deep learning training pipeline engineering  
+✔ Explainable results without black-box dependency  
+✔ Optimization for limited VRAM GPUs (GTX 1650)  
+✔ Clean modular structure & reproducible workflow  
 
 ---
 
-## 📋 Full Project Requirements
+## 📬 Contact
 
-A detailed breakdown of the functional, non-functional, and technical requirements is available in `docs/project_requirements.md`.
+**Kirtiraj Chaudhari**  
+Email: *available on request*  
+GitHub: [https://github.com/KirtirajChaudhari](https://github.com/KirtirajChaudhari)
 
-### Key Functional Requirements
+---
 
-- **Input/Output**: Accepts an image, outputs a binary mask, a JSON of four corners, and a 600×400 rectified card crop.
-- **Dataset Handling**: Support for merging MIDV-2020/500, SmartDoc, Roboflow (COCO), and custom images.
-- **Evaluation**: Compute and report IoU, Dice, and NCD (Normalized Corner Distance).
+## ⭐ Final Summary
 
-### Key Non-Functional Requirements
+This repository demonstrates two scalable approaches to practical document segmentation without YOLO/SAM dependencies. The primary U-Net approach additionally provides corner estimation & rectification, while the DeepLabV3+ approach provides competitive segmentation quality.
 
-- **Explainability**: Reliance on explicit Segmentation → Geometry path.
-- **Performance**: Must run efficiently on a single GPU (e.g., GTX 1650), leveraging AMP and gradient checkpointing.
-- **Robustness**: Gracefully handles corrupted files and missing ground-truth masks without crashing.
+---
+
+### License
+
+See [LICENSE](LICENSE) for details.
