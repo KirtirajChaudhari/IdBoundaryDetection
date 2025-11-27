@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""
+eval_and_visualize.py
+- Loads a single-class DeepLabV3+ model saved as a PyTorch checkpoint (.pth)
+- Runs inference on a single image or all images in a folder
+- Optionally compares prediction masks to ground-truth masks and reports IoU & Dice
+- Saves outputs: binary mask, overlay, and outline image per input image.
+
+Usage example (PowerShell):
+python .\eval_and_visualize.py --model "submission/deeplabv3p_best.pth" --input "datasets/test/image.jpg" --out "submission/outputs" --gt "datasets/test/image_mask.png" --device cuda
+
+Author: (yours)
+"""
+import argparse
+from pathlib import Path
+import os
+import cv2
+import numpy as np
+import torch
+import torch.nn.functional as F
+import segmentation_models_pytorch as smp
+from matplotlib import pyplot as plt
+
+# ---------------- utilities ----------------
+def load_checkpoint(model_path, device):
+    ck = torch.load(model_path, map_location=device)
+    # if saved as dict with state_dict
+    if "model_state_dict" in ck:
+        state = ck["model_state_dict"]
+    else:
+        state = ck
+    model = smp.DeepLabV3Plus(encoder_name="resnet34", in_channels=3, classes=1, encoder_weights=None)
+    model.to(device)
+    model.eval()
+    model.load_state_dict(state)
+    return model
+
+def preprocess_img_bgr(img_bgr, img_size=None):
+    # expects BGR input (cv2.imread)
+    img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32)/255.0
+    if img_size is not None:
+        img = cv2.resize(img, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
+    mean = np.array([0.485,0.456,0.406], dtype=np.float32)
+    std  = np.array([0.229,0.224,0.225], dtype=np.float32)
+    img = (img - mean) / std
+    tensor = torch.from_numpy(img.transpose(2,0,1)).unsqueeze(0).float()
+    return tensor
+
+# def postprocess_mask(prob, orig_shape, thr=0.5):
+#     # prob: single-channel torch tensor (H,W) or numpy
+#     if isinstance(prob, torch.Tensor):
+#         prob = prob.detach().cpu().numpy()
+#     if prob.ndim==3:
+#         prob = prob[0,0,:,:] if prob.shape[0]==1 else prob[0,:,:]
+#     mask = (prob >= thr).astype(np.uint8) * 255
+#     mask = cv2.resize(mask, (orig_shape[1], orig_shape[0]), interpolation=cv2.INTER_NEAREST)
+#     return mask
+
+def postprocess_mask(prob, orig_shape, thr=0.5):
+    """
+    prob: numpy array HxW of probabilities (0..1) from model output (resized to model input)
+    orig_shape: tuple (H_orig, W_orig) desired output shape
+    thr: threshold to binarize
+    Returns uint8 mask in original shape (values 0 or 255)
+    """
+    import cv2
+    # ensure prob is numpy and 2D
+    if prob is None:
+        raise ValueError("prob is None in postprocess_mask")
+
+    import numpy as np
+    prob = np.asarray(prob)
+    if prob.ndim == 3 and prob.shape[0] == 1:
+        prob = prob[0]
+    if prob.ndim != 2:
+        # try to reduce
+        prob = prob.squeeze()
+    # binarize
+    mask = (prob >= thr).astype('uint8') * 255
+
+    # Validate orig_shape
+    try:
+        H, W = int(orig_shape[0]), int(orig_shape[1])
+    except Exception:
+        H, W = 0, 0
+
+    # If orig dims invalid or zero, fall back to mask shape
+    if H <= 0 or W <= 0:
+        H, W = mask.shape[:2]
+
+    # If mask already that shape, no resize needed
+    if (mask.shape[0], mask.shape[1]) != (H, W):
+        # ensure positive integers for dsize
+        if H <= 0 or W <= 0:
+            raise ValueError(f"Invalid target size H={H},W={W}")
+        mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
+
+    # ensure uint8 and 0/255
+    mask = (mask > 127).astype('uint8') * 255
+    return mask
+
+
+def overlay_and_outline(img_bgr, mask, alpha=0.5, outline_color=(0,0,255)):
+    # img_bgr: original BGR image; mask: binary 0/255
+    overlay = img_bgr.copy()
+    color_mask = np.zeros_like(overlay)
+    color_mask[mask>0] = (0,255,0)  # green region
+    overlay = cv2.addWeighted(overlay, 1.0, color_mask, alpha, 0)
+
+    # compute contour (outline)
+    contours, _ = cv2.findContours((mask>0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    outlined = overlay.copy()
+    cv2.drawContours(outlined, contours, -1, outline_color, thickness=2)
+    return overlay, outlined
+
+def iou_and_dice(pred_mask, gt_mask, eps=1e-6):
+    # pred_mask, gt_mask: binary uint8 0/255 same shape
+    p = (pred_mask>127).astype(np.uint8).ravel()
+    g = (gt_mask>127).astype(np.uint8).ravel()
+    inter = (p & g).sum()
+    union = (p | g).sum()
+    iou = (inter + eps) / (union + eps)
+    dice = (2*inter + eps) / (p.sum() + g.sum() + eps)
+    return float(iou), float(dice)
+
+# ---------------- main ----------------
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", required=True, help="Path to .pth model (submission/deeplabv3p_best.pth)")
+    parser.add_argument("--input", required=True, help="Input image or folder of images")
+    parser.add_argument("--out", required=True, help="Output directory to save results")
+    parser.add_argument("--gt", default=None, help="(optional) ground-truth mask or folder with masks (same filenames, .png)")
+    parser.add_argument("--img-size", type=int, default=512, help="resize short side for model (square)")
+    parser.add_argument("--thr", type=float, default=0.5, help="threshold for binary mask")
+    parser.add_argument("--device", default="cuda", help="cpu or cuda")
+    args = parser.parse_args()
+
+    device = torch.device(args.device if torch.cuda.is_available() and args.device.startswith("cuda") else "cpu")
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    model = load_checkpoint(args.model, device)
+
+    inp = Path(args.input)
+    if inp.is_file():
+        images = [inp]
+    else:
+        # all images in folder
+        ext = {".jpg",".jpeg",".png",".bmp"}
+        images = sorted([p for p in inp.glob("*") if p.suffix.lower() in ext])
+
+    # determine GT mapping
+    gt_provided = False
+    gt_root = None
+    if args.gt:
+        gt_root = Path(args.gt)
+        gt_provided = True
+
+    metrics = []
+    for p in images:
+        img = cv2.imread(str(p))
+        if img is None:
+            print("WARNING: failed to read", p); continue
+        H,W = img.shape[:2]
+        inp_t = preprocess_img_bgr(img, img_size=args.img_size).to(device)
+        with torch.no_grad():
+            out = model(inp_t)
+            # out shape: [1,1,H',W']
+            prob = torch.sigmoid(out)
+        mask = postprocess_mask(prob, (H,W), thr=args.thr)
+
+        # save mask
+        out_mask_path = out_dir / (p.stem + "_pred_mask.png")
+        cv2.imwrite(str(out_mask_path), mask)
+
+        # overlay and outline
+        overlay, outlined = overlay_and_outline(img, mask)
+        cv2.imwrite(str(out_dir / (p.stem + "_overlay.png")), overlay)
+        cv2.imwrite(str(out_dir / (p.stem + "_outline.png")), outlined)
+
+        # compute metrics if GT provided
+        if gt_provided:
+            # if gt is a folder, look for same stem + common ext
+            gt_path = None
+            if gt_root.is_file():
+                gt_path = gt_root
+            else:
+                # try .png then .jpg
+                for ext in [".png", ".jpg", ".jpeg"]:
+                    cand = gt_root / (p.stem + ext)
+                    if cand.exists():
+                        gt_path = cand
+                        break
+            if gt_path and gt_path.exists():
+                gt_mask = cv2.imread(str(gt_path), cv2.IMREAD_GRAYSCALE)
+                if gt_mask is None:
+                    print("WARNING: couldn't read GT mask for", p)
+                else:
+                    iou, dice = iou_and_dice(mask, gt_mask)
+                    metrics.append((p.name, iou, dice))
+                    print(f"{p.name}  IoU={iou:.4f}  Dice={dice:.4f}")
+            else:
+                print(f"GT not found for {p.name} (looked in {gt_root})")
+
+    # summary
+    if metrics:
+        ious = [m[1] for m in metrics]
+        dices = [m[2] for m in metrics]
+        print("=== SUMMARY ===")
+        print(f"Images: {len(metrics)}  Mean IoU: {np.mean(ious):.4f}  Mean Dice: {np.mean(dices):.4f}")
+        # write CSV
+        import csv
+        with open(out_dir / "metrics.csv","w",newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["image","iou","dice"])
+            for row in metrics:
+                writer.writerow(row)
+
+if __name__ == "__main__":
+    main()
